@@ -1,5 +1,5 @@
 // Path: CounterFlameNoRecoil.mm
-// Build: clang++ -std=c++20 -O2 -Wall -Wextra -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) -dynamiclib CounterFlameNoRecoil.mm -framework Foundation -o CounterFlameNoRecoil.dylib
+// Build: clang++ -std=c++20 -O2 -Wall -Wextra -arch arm64 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) -miphoneos-version-min=14.0 -dynamiclib -Wl,-install_name,@executable_path/Frameworks/CounterFlameNoRecoil.dylib CounterFlameNoRecoil.mm -framework Foundation -o CounterFlameNoRecoil.dylib
 
 #include <Foundation/Foundation.h>
 #include <dlfcn.h>
@@ -107,7 +107,7 @@ struct Il2CppApi {
 static Il2CppApi g_api{};
 
 // ============================================================================
-// 2. SIGNED REPLACEMENT STUBS (LIVE IN THIS DYLIB'S SIGNED __TEXT SEGMENT)
+// 2. SIGNED REPLACEMENT STUBS
 // ============================================================================
 static void stub_return_void() noexcept {
     return;
@@ -135,7 +135,7 @@ static void* stub_invoker_zero(
 }
 
 // ============================================================================
-// 3. OPTIONAL STATIC RVA FALLBACK TABLE
+// 3. STATIC RVA FALLBACK TABLE
 // ============================================================================
 struct StaticPatch {
     uintptr_t      rva;
@@ -191,7 +191,7 @@ static void try_static_rva_patch(uintptr_t base_addr, const StaticPatch& entry) 
 }
 
 // ============================================================================
-// 4. CASE-INSENSITIVE KEYWORD MATCHER FOR RECOIL / SPREAD / KICK
+// 4. KEYWORD MATCHER
 // ============================================================================
 static size_t safe_cstr_len(const char* s, size_t max_len) noexcept {
     if (s == nullptr) {
@@ -524,7 +524,7 @@ static void inspect_and_register_class(Il2CppClass* klass) noexcept {
 }
 
 // ============================================================================
-// 6. RUNTIME INSTANCE ZEROING LOOP
+// 6. RUNTIME INSTANCE ZEROING LOOP (CRASH PROTECTED)
 // ============================================================================
 using FindObjectsOfTypeFn       = Il2CppArrayLayout* (*)(Il2CppObject* systemType, bool includeInactive);
 using FindObjectsOfTypeLegacyFn = Il2CppArrayLayout* (*)(Il2CppObject* systemType);
@@ -620,7 +620,7 @@ static void* norecoil_worker_thread(void* /*arg*/) noexcept {
         return nullptr;
     }
 
-    sleep(2);
+    sleep(3);
 
     size_t assembly_count = 0;
     const Il2CppAssembly** assemblies = g_api.domain_get_assemblies(domain, &assembly_count);
@@ -670,30 +670,37 @@ static void* norecoil_worker_thread(void* /*arg*/) noexcept {
     }
 
     while (true) {
+        usleep(250000);
+
         for (const auto& tc : g_tracked_classes) {
-            zero_instance_fields(nullptr, tc.fields);
+            @try {
+                zero_instance_fields(nullptr, tc.fields);
 
-            if (tc.system_type_obj == nullptr) {
-                continue;
-            }
+                if (tc.system_type_obj == nullptr || (find_objs_v2 == nullptr && find_objs_v1 == nullptr)) {
+                    continue;
+                }
 
-            Il2CppArrayLayout* arr = nullptr;
-            if (find_objs_v2 != nullptr) {
-                arr = find_objs_v2(tc.system_type_obj, false);
-            } else if (find_objs_v1 != nullptr) {
-                arr = find_objs_v1(tc.system_type_obj);
-            }
+                Il2CppArrayLayout* arr = nullptr;
+                if (find_objs_v2 != nullptr) {
+                    arr = find_objs_v2(tc.system_type_obj, false);
+                } else if (find_objs_v1 != nullptr) {
+                    arr = find_objs_v1(tc.system_type_obj);
+                }
 
-            if (arr != nullptr && arr->max_length > 0 && arr->max_length < 512) {
-                for (uintptr_t idx = 0; idx < arr->max_length; ++idx) {
-                    void* obj = arr->vector[idx];
-                    if (obj != nullptr) {
-                        zero_instance_fields(obj, tc.fields);
+                if (arr != nullptr) {
+                    uintptr_t length = arr->max_length;
+                    if (length > 0 && length < 256) {
+                        for (uintptr_t idx = 0; idx < length; ++idx) {
+                            void* obj = arr->vector[idx];
+                            if (obj != nullptr && reinterpret_cast<uintptr_t>(obj) > 0x1000) {
+                                zero_instance_fields(obj, tc.fields);
+                            }
+                        }
                     }
                 }
+            } @catch (...) {
             }
         }
-        usleep(100000);
     }
 
     return nullptr;
@@ -702,11 +709,10 @@ static void* norecoil_worker_thread(void* /*arg*/) noexcept {
 } // namespace cf_norecoil
 
 // ============================================================================
-// 7. AUTO-START ENTRYPOINT
+// 7. DELAYED AUTO-START ENTRYPOINT
 // ============================================================================
 __attribute__((constructor))
 static void counter_flame_norecoil_entry() {
-    // Oyuna ve Unity altyapısına 4 saniye tam yüklenme süresi tanır
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         pthread_t tid{};
         pthread_attr_t attr{};
