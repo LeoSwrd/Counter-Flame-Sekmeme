@@ -1,0 +1,40 @@
+# Path: .github/workflows/build_dylib.yml
+name: Build CounterFlame iOS Dylib
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-ios-dylib:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Compile ARM64 iOS Dylib
+        run: |
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun -sdk iphoneos clang++ \
+            -std=c++20 \
+            -O2 \
+            -Wall \
+            -Wextra \
+            -arch arm64 \
+            -isysroot "$SDK_PATH" \
+            -miphoneos-version-min=14.0 \
+            -dynamiclib \
+            -Wl,-install_name,@executable_path/Frameworks/CounterFlameNoRecoil.dylib \
+            CounterFlameNoRecoil.mm \
+            -framework Foundation \
+            -o CounterFlameNoRecoil.dylib
+          strip -x CounterFlameNoRecoil.dylib
+          file CounterFlameNoRecoil.dylib
+
+      - name: Upload Compiled Dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: CounterFlameNoRecoil-dylib
+          path: CounterFlameNoRecoil.dylib
+          if-no-files-found: error
