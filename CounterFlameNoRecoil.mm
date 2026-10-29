@@ -706,11 +706,14 @@ static void* norecoil_worker_thread(void* /*arg*/) noexcept {
 // ============================================================================
 __attribute__((constructor))
 static void counter_flame_norecoil_entry() {
-    pthread_t tid{};
-    pthread_attr_t attr{};
-    if (pthread_attr_init(&attr) == 0) {
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        pthread_create(&tid, &attr, &cf_norecoil::norecoil_worker_thread, nullptr);
-        pthread_attr_destroy(&attr);
-    }
+    // Oyuna ve Unity altyapısına 4 saniye tam yüklenme süresi tanır
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        pthread_t tid{};
+        pthread_attr_t attr{};
+        if (pthread_attr_init(&attr) == 0) {
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            pthread_create(&tid, &attr, &cf_norecoil::norecoil_worker_thread, nullptr);
+            pthread_attr_destroy(&attr);
+        }
+    });
 }
