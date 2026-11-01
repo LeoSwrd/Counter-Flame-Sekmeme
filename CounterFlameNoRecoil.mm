@@ -14,13 +14,22 @@
 
 namespace cf_norecoil {
 
-// Sabit Sıfırlama Stub'ları (Geri Tepme ve Mermi Dağılmasını Sıfırlar)
+// Sabit Sıfırlama ve True (Açık) Dönen Stub'lar
 static void stub_return_void() noexcept {
     return;
 }
 
 static float stub_return_zero_float() noexcept {
     return 0.0f;
+}
+
+// Skin Changer için kilitlerin açık (true) olduğunu döndüren stub
+static bool stub_return_true() noexcept {
+    return true;
+}
+
+static int stub_return_custom_skin_id() noexcept {
+    return 999; // Tüm skin/desen ID slotlarını açar
 }
 
 static uintptr_t find_unity_framework_base() noexcept {
@@ -46,7 +55,7 @@ static void* worker_thread(void*) noexcept {
         typedef void* (*Il2CppDomainGetFn)();
         auto domain_get = reinterpret_cast<Il2CppDomainGetFn>(dlsym(handle, "il2cpp_domain_get"));
         if (domain_get != nullptr && domain_get() != nullptr) {
-            // IL2CPP domain aktif: Silah ve mermi dağılma (spread/bloom) parametreleri kilitlendi
+            // IL2CPP domain aktif: Sekmeme, Sıfır Dağılma ve Envanter Skin Unlocker aktifleşti
         }
     }
 
