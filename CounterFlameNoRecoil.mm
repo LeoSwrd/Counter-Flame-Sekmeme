@@ -1,11 +1,12 @@
-// File: TaterCheat.mm
+// File: CounterFlameNoRecoil.mm
 // Architecture: ARM64 iOS (UnityFramework IL2CPP)
-// Dependencies: None (Zero-Substrate native Mach vm_protect inline hook & patcher)
-// Compile: clang++ -dynamiclib -arch arm64 -fobjc-arc -O2 -isysroot $(xcrun --sdk iphoneos --show-sdk-path) -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics TaterCheat.mm -o TaterCheat.dylib
+// Dependencies: Zero external framework link flags required (Resolves UIKit via libobjc runtime)
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 #import <mach-o/dyld.h>
 #import <mach/mach.h>
 #import <sys/mman.h>
@@ -16,14 +17,14 @@
 #import <unistd.h>
 
 namespace Offsets {
-    // Replace these RVAs with the values from your Counter Flame dump.cs
+    // Counter Flame dump.cs içindeki RVA adreslerin
     constexpr uintptr_t Weapon_ApplyRecoil  = 0x18A4B20; // void ApplyRecoil(float vert, float horiz)
     constexpr uintptr_t Weapon_GetSpread    = 0x18A4C90; // float GetSpread()
     constexpr uintptr_t Player_Update       = 0x1642110; // void Update()
     constexpr uintptr_t Material_SetInt     = 0x24FB490; // void SetInt(Il2CppString* name, int value)
     constexpr uintptr_t Material_SetColor   = 0x24FB120; // void SetColor(Il2CppString* name, Color value)
     constexpr uintptr_t Il2Cpp_StringNew    = 0x1104820; // Il2CppString* il2cpp_string_new(const char* str)
-    constexpr uintptr_t Player_MatField     = 0x48;      // Field offset of cached Material* inside PlayerController
+    constexpr uintptr_t Player_MatField     = 0x48;      // PlayerController içindeki Material* alanı
 }
 
 struct Color {
@@ -76,10 +77,8 @@ static bool InlineHook64(uintptr_t targetAddr, void* replaceFunc, void** origFun
         void* trampoline = mmap(nullptr, vm_page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         if (trampoline == MAP_FAILED) return false;
 
-        // Copy original 16 bytes (4 ARM64 instructions)
         memcpy(trampoline, (const void*)targetAddr, 16);
 
-        // Append jump back to targetAddr + 16
         uint32_t* jmpBack = (uint32_t*)((uintptr_t)trampoline + 16);
         jmpBack[0] = 0x58000050; // LDR X16, #8
         jmpBack[1] = 0xD61F0200; // BR X16
@@ -106,7 +105,6 @@ static il2cpp_string_new_t fn_StringNew   = nullptr;
 static Material_SetInt_t   fn_MatSetInt   = nullptr;
 static Material_SetColor_t fn_MatSetColor = nullptr;
 
-// Original bytes backup for live toggle on No-Recoil / Spread
 static uint8_t g_OrigRecoilBytes[4] = {0};
 static uint8_t g_OrigSpreadBytes[8] = {0};
 
@@ -115,9 +113,9 @@ static void SetRecoilPatch(bool enable) {
     uintptr_t spreadAddr = GetAbsoluteAddress(Offsets::Weapon_GetSpread);
 
     if (enable) {
-        // ARM64: RET (0xD65F03C0) -> immediately returns from ApplyRecoil
+        // ARM64: RET (0xD65F03C0)
         const uint8_t retInst[4] = { 0xC0, 0x03, 0x5F, 0xD6 };
-        // ARM64: FMOV S0, WZR ; RET -> returns 0.0f from GetSpread
+        // ARM64: FMOV S0, WZR ; RET (0.0f döndürür)
         const uint8_t retZeroFloat[8] = { 0xE0, 0x03, 0x27, 0x1E, 0xC0, 0x03, 0x5F, 0xD6 };
 
         WriteMemory(recoilAddr, retInst, sizeof(retInst));
@@ -143,25 +141,81 @@ static void hook_PlayerUpdate(void* instance) {
     void* propColor  = fn_StringNew("_Color");
 
     if (g_Wallhack) {
-        fn_MatSetInt(playerMat, propZTest, 8);  // CompareFunction.Always (render through walls)
-        fn_MatSetInt(playerMat, propZWrite, 0); // Disable depth write
+        fn_MatSetInt(playerMat, propZTest, 8);  // CompareFunction.Always (Duvar arkası)
+        fn_MatSetInt(playerMat, propZWrite, 0);
         Color chamsRed = { 1.0f, 0.12f, 0.12f, 1.0f };
         fn_MatSetColor(playerMat, propColor, chamsRed);
     } else {
-        fn_MatSetInt(playerMat, propZTest, 4);  // CompareFunction.LessEqual (normal depth)
+        fn_MatSetInt(playerMat, propZTest, 4);  // CompareFunction.LessEqual (Normal)
         fn_MatSetInt(playerMat, propZWrite, 1);
     }
 }
 
-@interface TaterHUD : UIView
-@end
+// ============================================================================
+// RUNTIME UIKIT OVERLAY (Sıfır Linker Sembolü — objc_getClass ile dinamik)
+// ============================================================================
+static void TaterHUD_onDrag(id self, SEL _cmd, UIPanGestureRecognizer *pan) {
+    (void)_cmd;
+    UIView *view = (UIView *)self;
+    CGPoint delta = [pan translationInView:view.superview];
+    view.center = CGPointMake(view.center.x + delta.x, view.center.y + delta.y);
+    [pan setTranslation:CGPointMake(0.0, 0.0) inView:view.superview];
+}
 
-@implementation TaterHUD
+static void TaterHUD_onToggleWall(id self, SEL _cmd, UIButton *btn) {
+    (void)self; (void)_cmd;
+    Class UIColorCls = objc_getClass("UIColor");
+    g_Wallhack = !g_Wallhack;
+    [btn setTitle:(g_Wallhack ? @"Wallhack (Chams): ON" : @"Wallhack (Chams): OFF") forState:UIControlStateNormal];
+    btn.backgroundColor = g_Wallhack
+        ? [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0]
+        : [UIColorCls darkGrayColor];
+}
 
-+ (void)presentOverlay {
+static void TaterHUD_onToggleRecoil(id self, SEL _cmd, UIButton *btn) {
+    (void)self; (void)_cmd;
+    Class UIColorCls = objc_getClass("UIColor");
+    g_NoRecoil = !g_NoRecoil;
+    SetRecoilPatch(g_NoRecoil);
+    [btn setTitle:(g_NoRecoil ? @"No Recoil/Spread: ON" : @"No Recoil/Spread: OFF") forState:UIControlStateNormal];
+    btn.backgroundColor = g_NoRecoil
+        ? [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0]
+        : [UIColorCls darkGrayColor];
+}
+
+static Class GetOrCreateTaterHUDClass(void) {
+    static Class hudClass = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Class UIViewCls = objc_getClass("UIView");
+        hudClass = objc_allocateClassPair(UIViewCls, "TaterHUDView", 0);
+        if (hudClass) {
+            class_addMethod(hudClass, sel_registerName("onDrag:"), (IMP)TaterHUD_onDrag, "v@:@");
+            class_addMethod(hudClass, sel_registerName("onToggleWall:"), (IMP)TaterHUD_onToggleWall, "v@:@");
+            class_addMethod(hudClass, sel_registerName("onToggleRecoil:"), (IMP)TaterHUD_onToggleRecoil, "v@:@");
+            objc_registerClassPair(hudClass);
+        } else {
+            hudClass = objc_getClass("TaterHUDView");
+        }
+    });
+    return hudClass;
+}
+
+static void PresentTaterOverlay(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        Class UIApplicationCls = objc_getClass("UIApplication");
+        Class UIColorCls       = objc_getClass("UIColor");
+        Class UIFontCls        = objc_getClass("UIFont");
+        Class UILabelCls       = objc_getClass("UILabel");
+        Class UIButtonCls      = objc_getClass("UIButton");
+        Class UIPanCls         = objc_getClass("UIPanGestureRecognizer");
+
+        if (!UIApplicationCls || !UIColorCls) return;
+
+        UIApplication *app = [UIApplicationCls sharedApplication];
         UIWindow *targetWindow = nil;
-        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+
+        for (UIWindowScene *scene in app.connectedScenes) {
             if (scene.activationState == UISceneActivationStateForegroundActive) {
                 for (UIWindow *w in scene.windows) {
                     if (w.isKeyWindow) { targetWindow = w; break; }
@@ -169,75 +223,51 @@ static void hook_PlayerUpdate(void* instance) {
             }
         }
         if (!targetWindow) {
-            targetWindow = [UIApplication sharedApplication].windows.firstObject;
+            targetWindow = app.windows.firstObject;
         }
         if (!targetWindow) return;
 
-        TaterHUD *hud = [[TaterHUD alloc] initWithFrame:CGRectMake(36, 76, 184, 112)];
+        Class HUDCls = GetOrCreateTaterHUDClass();
+        UIView *hud = [[HUDCls alloc] initWithFrame:CGRectMake(36.0, 76.0, 184.0, 112.0)];
+        hud.backgroundColor = [UIColorCls colorWithWhite:0.06 alpha:0.86];
+        hud.layer.cornerRadius = 10.0;
+        hud.layer.borderWidth = 1.5;
+        hud.layer.borderColor = [UIColorCls systemRedColor].CGColor;
+
+        UIPanGestureRecognizer *pan = [[UIPanCls alloc] initWithTarget:hud action:sel_registerName("onDrag:")];
+        [hud addGestureRecognizer:pan];
+
+        UILabel *header = [[UILabelCls alloc] initWithFrame:CGRectMake(8.0, 6.0, 168.0, 20.0)];
+        header.text = @"KANHA // CF-MOD";
+        header.textColor = [UIColorCls whiteColor];
+        header.font = [UIFontCls boldSystemFontOfSize:12.0];
+        header.textAlignment = NSTextAlignmentCenter;
+        [hud addSubview:header];
+
+        UIButton *wallBtn = [UIButtonCls buttonWithType:UIButtonTypeCustom];
+        wallBtn.frame = CGRectMake(10.0, 32.0, 164.0, 32.0);
+        wallBtn.layer.cornerRadius = 6.0;
+        wallBtn.backgroundColor = [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
+        wallBtn.titleLabel.font = [UIFontCls boldSystemFontOfSize:12.0];
+        [wallBtn setTitle:@"Wallhack (Chams): ON" forState:UIControlStateNormal];
+        [wallBtn addTarget:hud action:sel_registerName("onToggleWall:") forControlEvents:UIControlEventTouchUpInside];
+        [hud addSubview:wallBtn];
+
+        UIButton *recoilBtn = [UIButtonCls buttonWithType:UIButtonTypeCustom];
+        recoilBtn.frame = CGRectMake(10.0, 70.0, 164.0, 32.0);
+        recoilBtn.layer.cornerRadius = 6.0;
+        recoilBtn.backgroundColor = [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
+        recoilBtn.titleLabel.font = [UIFontCls boldSystemFontOfSize:12.0];
+        [recoilBtn setTitle:@"No Recoil/Spread: ON" forState:UIControlStateNormal];
+        [recoilBtn addTarget:hud action:sel_registerName("onToggleRecoil:") forControlEvents:UIControlEventTouchUpInside];
+        [hud addSubview:recoilBtn];
+
         [targetWindow addSubview:hud];
     });
 }
 
-- (instancetype)initWithFrame:(CGRect)frame {
-    if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.86];
-        self.layer.cornerRadius = 10.0;
-        self.layer.borderWidth = 1.5;
-        self.layer.borderColor = [UIColor systemRedColor].CGColor;
-
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onDrag:)];
-        [self addGestureRecognizer:pan];
-
-        UILabel *header = [[UILabel alloc] initWithFrame:CGRectMake(8, 6, 168, 20)];
-        header.text = @"KANHA // CF-MOD";
-        header.textColor = [UIColor whiteColor];
-        header.font = [UIFont boldSystemFontOfSize:12];
-        header.textAlignment = NSTextAlignmentCenter;
-        [self addSubview:header];
-
-        UIButton *wallBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        wallBtn.frame = CGRectMake(10, 32, 164, 32);
-        wallBtn.layer.cornerRadius = 6.0;
-        wallBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
-        wallBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-        [wallBtn setTitle:@"Wallhack (Chams): ON" forState:UIControlStateNormal];
-        [wallBtn addTarget:self action:@selector(onToggleWall:) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:wallBtn];
-
-        UIButton *recoilBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-        recoilBtn.frame = CGRectMake(10, 70, 164, 32);
-        recoilBtn.layer.cornerRadius = 6.0;
-        recoilBtn.backgroundColor = [UIColor colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
-        recoilBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-        [recoilBtn setTitle:@"No Recoil/Spread: ON" forState:UIControlStateNormal];
-        [recoilBtn addTarget:self action:@selector(onToggleRecoil:) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:recoilBtn];
-    }
-    return self;
-}
-
-- (void)onDrag:(UIPanGestureRecognizer *)pan {
-    CGPoint delta = [pan translationInView:self.superview];
-    self.center = CGPointMake(self.center.x + delta.x, self.center.y + delta.y);
-    [pan setTranslation:CGPointZero inView:self.superview];
-}
-
-- (void)onToggleWall:(UIButton *)btn {
-    g_Wallhack = !g_Wallhack;
-    [btn setTitle:(g_Wallhack ? @"Wallhack (Chams): ON" : @"Wallhack (Chams): OFF") forState:UIControlStateNormal];
-    btn.backgroundColor = g_Wallhack ? [UIColor colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0] : [UIColor darkGrayColor];
-}
-
-- (void)onToggleRecoil:(UIButton *)btn {
-    g_NoRecoil = !g_NoRecoil;
-    SetRecoilPatch(g_NoRecoil);
-    [btn setTitle:(g_NoRecoil ? @"No Recoil/Spread: ON" : @"No Recoil/Spread: OFF") forState:UIControlStateNormal];
-    btn.backgroundColor = g_NoRecoil ? [UIColor colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0] : [UIColor darkGrayColor];
-}
-
-@end
-
 static void* BootstrapThread(void* unused) {
+    (void)unused;
     while ((g_UnityBase = GetFrameworkBase("UnityFramework")) == 0) {
         usleep(200000);
     }
@@ -247,14 +277,13 @@ static void* BootstrapThread(void* unused) {
     fn_MatSetInt   = (Material_SetInt_t)GetAbsoluteAddress(Offsets::Material_SetInt);
     fn_MatSetColor = (Material_SetColor_t)GetAbsoluteAddress(Offsets::Material_SetColor);
 
-    // Save original instructions before patching
     memcpy(g_OrigRecoilBytes, (const void*)GetAbsoluteAddress(Offsets::Weapon_ApplyRecoil), sizeof(g_OrigRecoilBytes));
     memcpy(g_OrigSpreadBytes, (const void*)GetAbsoluteAddress(Offsets::Weapon_GetSpread), sizeof(g_OrigSpreadBytes));
 
     SetRecoilPatch(g_NoRecoil);
     InlineHook64(GetAbsoluteAddress(Offsets::Player_Update), (void*)&hook_PlayerUpdate, (void**)&orig_PlayerUpdate);
 
-    [TaterHUD presentOverlay];
+    PresentTaterOverlay();
     return nullptr;
 }
 
