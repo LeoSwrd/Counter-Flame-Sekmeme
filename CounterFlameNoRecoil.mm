@@ -152,8 +152,13 @@ static void hook_PlayerUpdate(void* instance) {
 }
 
 // ============================================================================
-// RUNTIME UIKIT OVERLAY (Sıfır Linker Sembolü — objc_getClass ile dinamik)
+// RUNTIME UIKIT OVERLAY (Sıfır Linker Sembolü ve Açık Tip Dönüşümlü)
 // ============================================================================
+static UIColor* MakeColorRGBA(CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    Class UIColorCls = objc_getClass("UIColor");
+    return (UIColor *)[UIColorCls colorWithRed:r green:g blue:b alpha:a];
+}
+
 static void TaterHUD_onDrag(id self, SEL _cmd, UIPanGestureRecognizer *pan) {
     (void)_cmd;
     UIView *view = (UIView *)self;
@@ -164,23 +169,21 @@ static void TaterHUD_onDrag(id self, SEL _cmd, UIPanGestureRecognizer *pan) {
 
 static void TaterHUD_onToggleWall(id self, SEL _cmd, UIButton *btn) {
     (void)self; (void)_cmd;
-    Class UIColorCls = objc_getClass("UIColor");
     g_Wallhack = !g_Wallhack;
     [btn setTitle:(g_Wallhack ? @"Wallhack (Chams): ON" : @"Wallhack (Chams): OFF") forState:UIControlStateNormal];
     btn.backgroundColor = g_Wallhack
-        ? [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0]
-        : [UIColorCls darkGrayColor];
+        ? MakeColorRGBA(0.15, 0.55, 0.20, 1.0)
+        : MakeColorRGBA(0.33, 0.33, 0.33, 1.0);
 }
 
 static void TaterHUD_onToggleRecoil(id self, SEL _cmd, UIButton *btn) {
     (void)self; (void)_cmd;
-    Class UIColorCls = objc_getClass("UIColor");
     g_NoRecoil = !g_NoRecoil;
     SetRecoilPatch(g_NoRecoil);
     [btn setTitle:(g_NoRecoil ? @"No Recoil/Spread: ON" : @"No Recoil/Spread: OFF") forState:UIControlStateNormal];
     btn.backgroundColor = g_NoRecoil
-        ? [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0]
-        : [UIColorCls darkGrayColor];
+        ? MakeColorRGBA(0.15, 0.55, 0.20, 1.0)
+        : MakeColorRGBA(0.33, 0.33, 0.33, 1.0);
 }
 
 static Class GetOrCreateTaterHUDClass(void) {
@@ -204,15 +207,14 @@ static Class GetOrCreateTaterHUDClass(void) {
 static void PresentTaterOverlay(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         Class UIApplicationCls = objc_getClass("UIApplication");
-        Class UIColorCls       = objc_getClass("UIColor");
         Class UIFontCls        = objc_getClass("UIFont");
         Class UILabelCls       = objc_getClass("UILabel");
         Class UIButtonCls      = objc_getClass("UIButton");
         Class UIPanCls         = objc_getClass("UIPanGestureRecognizer");
 
-        if (!UIApplicationCls || !UIColorCls) return;
+        if (!UIApplicationCls || !UIFontCls) return;
 
-        UIApplication *app = [UIApplicationCls sharedApplication];
+        UIApplication *app = (UIApplication *)[UIApplicationCls sharedApplication];
         UIWindow *targetWindow = nil;
 
         for (UIWindowScene *scene in app.connectedScenes) {
@@ -228,36 +230,38 @@ static void PresentTaterOverlay(void) {
         if (!targetWindow) return;
 
         Class HUDCls = GetOrCreateTaterHUDClass();
-        UIView *hud = [[HUDCls alloc] initWithFrame:CGRectMake(36.0, 76.0, 184.0, 112.0)];
-        hud.backgroundColor = [UIColorCls colorWithWhite:0.06 alpha:0.86];
+        UIView *hud = (UIView *)[[HUDCls alloc] initWithFrame:CGRectMake(36.0, 76.0, 184.0, 112.0)];
+        hud.backgroundColor = MakeColorRGBA(0.06, 0.06, 0.06, 0.86);
         hud.layer.cornerRadius = 10.0;
         hud.layer.borderWidth = 1.5;
-        hud.layer.borderColor = [UIColorCls systemRedColor].CGColor;
+        hud.layer.borderColor = MakeColorRGBA(1.0, 0.20, 0.20, 1.0).CGColor;
 
-        UIPanGestureRecognizer *pan = [[UIPanCls alloc] initWithTarget:hud action:sel_registerName("onDrag:")];
+        UIPanGestureRecognizer *pan = (UIPanGestureRecognizer *)[[UIPanCls alloc] initWithTarget:hud action:sel_registerName("onDrag:")];
         [hud addGestureRecognizer:pan];
 
-        UILabel *header = [[UILabelCls alloc] initWithFrame:CGRectMake(8.0, 6.0, 168.0, 20.0)];
+        UIFont *boldFont = (UIFont *)[UIFontCls boldSystemFontOfSize:12.0];
+
+        UILabel *header = (UILabel *)[[UILabelCls alloc] initWithFrame:CGRectMake(8.0, 6.0, 168.0, 20.0)];
         header.text = @"KANHA // CF-MOD";
-        header.textColor = [UIColorCls whiteColor];
-        header.font = [UIFontCls boldSystemFontOfSize:12.0];
+        header.textColor = MakeColorRGBA(1.0, 1.0, 1.0, 1.0);
+        header.font = boldFont;
         header.textAlignment = NSTextAlignmentCenter;
         [hud addSubview:header];
 
-        UIButton *wallBtn = [UIButtonCls buttonWithType:UIButtonTypeCustom];
+        UIButton *wallBtn = (UIButton *)[UIButtonCls buttonWithType:UIButtonTypeCustom];
         wallBtn.frame = CGRectMake(10.0, 32.0, 164.0, 32.0);
         wallBtn.layer.cornerRadius = 6.0;
-        wallBtn.backgroundColor = [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
-        wallBtn.titleLabel.font = [UIFontCls boldSystemFontOfSize:12.0];
+        wallBtn.backgroundColor = MakeColorRGBA(0.15, 0.55, 0.20, 1.0);
+        wallBtn.titleLabel.font = boldFont;
         [wallBtn setTitle:@"Wallhack (Chams): ON" forState:UIControlStateNormal];
         [wallBtn addTarget:hud action:sel_registerName("onToggleWall:") forControlEvents:UIControlEventTouchUpInside];
         [hud addSubview:wallBtn];
 
-        UIButton *recoilBtn = [UIButtonCls buttonWithType:UIButtonTypeCustom];
+        UIButton *recoilBtn = (UIButton *)[UIButtonCls buttonWithType:UIButtonTypeCustom];
         recoilBtn.frame = CGRectMake(10.0, 70.0, 164.0, 32.0);
         recoilBtn.layer.cornerRadius = 6.0;
-        recoilBtn.backgroundColor = [UIColorCls colorWithRed:0.15 green:0.55 blue:0.20 alpha:1.0];
-        recoilBtn.titleLabel.font = [UIFontCls boldSystemFontOfSize:12.0];
+        recoilBtn.backgroundColor = MakeColorRGBA(0.15, 0.55, 0.20, 1.0);
+        recoilBtn.titleLabel.font = boldFont;
         [recoilBtn setTitle:@"No Recoil/Spread: ON" forState:UIControlStateNormal];
         [recoilBtn addTarget:hud action:sel_registerName("onToggleRecoil:") forControlEvents:UIControlEventTouchUpInside];
         [hud addSubview:recoilBtn];
